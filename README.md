@@ -44,13 +44,47 @@ A C++ application that joins Zoom meetings as a bot participant and records per-
    ```
 
 4. **Configure credentials:**
-   - Update `src/main.cpp` with your Zoom app credentials:
-     - `clientId`, `clientSecret`, `accountId` (OAuth)
-     - `appKey`, `appSecret` (JWT/SDK)
+   
+   **Option 1: Use the setup script (recommended):**
+   ```bash
+   ./setup-env.sh
+   # This will create .env.local file and guide you through setup
+   ```
+
+   **Option 2: Manual setup:**
+   ```bash
+   # Copy the example environment file
+   cp .env.example .env.local
+   
+   # Edit with your actual credentials
+   nano .env.local  # or your preferred editor
+   
+   # Load environment variables
+   source .env.local
+   ```
+
+   **Required Environment Variables:**
+   - `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_ACCOUNT_ID` (OAuth app)
+   - `ZOOM_APP_KEY`, `ZOOM_APP_SECRET` (SDK app) 
+   - `ZOOM_MEETING_NUMBER`, `ZOOM_MEETING_PASSWORD` (meeting info)
+   - `ZOOM_BOT_USERNAME` (optional, defaults to "ZoomBot")
 
 ### Usage
 
+**First-time setup:**
 ```bash
+# Set up environment variables
+./setup-env.sh
+
+# Or manually:
+source .env.local  # Load your environment variables
+```
+
+**Run the bot:**
+```bash
+# Make sure environment variables are loaded
+source .env.local  # If not already loaded
+
 # Run the bot (from build directory)
 ./zoom_poc
 
@@ -67,13 +101,30 @@ The bot will:
 
 ### Configuration
 
-Edit these constants in `src/main.cpp`:
+The bot uses environment variables for secure credential management. Set these variables:
 
-```cpp
-constexpr uint64_t MEETING_NUMBER = 82737697846;      // Your meeting ID
-constexpr const char* MEETING_PASSWORD = "893950";    // Meeting password
-constexpr const char* BOT_USERNAME = "MyBot";         // Bot display name
+```bash
+# OAuth credentials (Server-to-Server OAuth app)
+export ZOOM_CLIENT_ID=your_client_id
+export ZOOM_CLIENT_SECRET=your_client_secret  
+export ZOOM_ACCOUNT_ID=your_account_id
+
+# SDK credentials (Meeting SDK app)
+export ZOOM_APP_KEY=your_app_key
+export ZOOM_APP_SECRET=your_app_secret
+
+# Meeting configuration
+export ZOOM_MEETING_NUMBER=12345678901
+export ZOOM_MEETING_PASSWORD=meeting_password
+export ZOOM_BOT_USERNAME=ZoomBot  # Optional
 ```
+
+**Getting Credentials:**
+1. Go to [Zoom App Marketplace](https://marketplace.zoom.us/develop/apps)
+2. Create a **Server-to-Server OAuth** app for OAuth credentials
+3. Create a **Meeting SDK** app for SDK credentials  
+4. Enable required scopes: `meeting:read`, `meeting:write`
+5. Enable **Raw Data** feature in SDK app (if available)
 
 ## 🔧 Technical Architecture
 

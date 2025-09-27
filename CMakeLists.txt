@@ -25,7 +25,8 @@ add_executable(zoom_poc
     src/auth_event_handler.cpp
     src/meeting_detector.cpp
     src/sdk_initializer.cpp
-    src/audio_raw_handler.cpp)
+    src/audio_raw_handler.cpp
+    src/config.cpp)
 
 # Test executable
 add_executable(test_auth

@@ -27,6 +27,7 @@
 #include "zoom_auth.h"
 #include "jwt_helper.h"
 #include "audio_raw_handler.h"
+#include "config.h"
 
 using namespace ZoomBot;
 
@@ -110,10 +111,7 @@ bool setupSignalHandling() {
 }
 
 namespace {
-    // Meeting configuration
-    constexpr uint64_t MEETING_NUMBER = 83786277121;
-    constexpr const char* MEETING_PASSWORD = "592620";
-    constexpr const char* BOT_USERNAME = "MyBot";
+    // Meeting timeout configuration
     constexpr int MEETING_TIMEOUT_SECONDS = 120;
 }
 
@@ -168,9 +166,9 @@ bool joinMeeting(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService,
     // Clear all parameters first
     memset(&normalUserParam, 0, sizeof(normalUserParam));
     
-    normalUserParam.meetingNumber = MEETING_NUMBER;
-    normalUserParam.userName = BOT_USERNAME;
-    normalUserParam.psw = MEETING_PASSWORD;
+    normalUserParam.meetingNumber = Config::getMeetingNumber();
+    normalUserParam.userName = Config::getBotUsername().c_str();
+    normalUserParam.psw = Config::getMeetingPassword().c_str();
     // Join meeting with audio so we can receive raw audio when licensed
     normalUserParam.isAudioOff = false;
     normalUserParam.isVideoOff = true;
@@ -318,39 +316,56 @@ int main() {
     // Log SDK version for diagnostics
     std::cout << "Zoom SDK Version: " << ZOOM_SDK_NAMESPACE::GetSDKVersion() << std::endl;
 
-    // Step 1: Get OAuth and JWT tokens
-    std::string oauthToken, jwtToken;
-    
-    // Get OAuth token
-    const std::string clientId = "LPedohjHTNWnA4SVaQBoDA";
-    const std::string clientSecret = "PiNkN09nJsKvodKiAM12LYP2hDH5vBse";
-    const std::string accountId = "nwV2DrU_RbOKrYq1S2gl2g";
-    
-    oauthToken = getZoomAccessToken(clientId, clientSecret, accountId);
-    if (oauthToken.empty()) {
-        std::cerr << "Failed to get OAuth token" << std::endl;
+    // Step 1: Load configuration from environment variables
+    if (!Config::loadFromEnvironment()) {
+        std::cerr << "\n❌ Configuration Error: Missing required environment variables." << std::endl;
+        std::cerr << "\nPlease set the following environment variables:" << std::endl;
+        std::cerr << "  ZOOM_CLIENT_ID=your_client_id" << std::endl;
+        std::cerr << "  ZOOM_CLIENT_SECRET=your_client_secret" << std::endl;
+        std::cerr << "  ZOOM_ACCOUNT_ID=your_account_id" << std::endl;
+        std::cerr << "  ZOOM_APP_KEY=your_app_key" << std::endl;
+        std::cerr << "  ZOOM_APP_SECRET=your_app_secret" << std::endl;
+        std::cerr << "  ZOOM_MEETING_NUMBER=meeting_id" << std::endl;
+        std::cerr << "  ZOOM_MEETING_PASSWORD=meeting_password" << std::endl;
+        std::cerr << "  ZOOM_BOT_USERNAME=bot_name (optional, defaults to 'ZoomBot')" << std::endl;
+        std::cerr << "\nExample:" << std::endl;
+        std::cerr << "  export ZOOM_CLIENT_ID=your_client_id" << std::endl;
+        std::cerr << "  export ZOOM_CLIENT_SECRET=your_client_secret" << std::endl;
+        std::cerr << "  # ... set other variables ..." << std::endl;
+        std::cerr << "  ./zoom_poc" << std::endl;
+        Config::printStatus();
         g_main_loop_unref(mainLoop);
         return -1;
     }
-    std::cout << "Got OAuth token: " << oauthToken.substr(0, 20) << "..." << std::endl;
+    
+    Config::printStatus();
+
+    // Step 2: Get OAuth and JWT tokens using configuration
+    std::string oauthToken, jwtToken;
+    
+    // Get OAuth token using configuration
+    oauthToken = getZoomAccessToken(Config::getClientId(), Config::getClientSecret(), Config::getAccountId());
+    if (oauthToken.empty()) {
+        std::cerr << "Failed to get OAuth token. Please check your OAuth credentials." << std::endl;
+        g_main_loop_unref(mainLoop);
+        return -1;
+    }
+    std::cout << "✅ Got OAuth token: " << oauthToken.substr(0, 20) << "..." << std::endl;
     std::cout << "Skipping ZAK token (not needed for participant join)" << std::endl;
     
     // Verify meeting exists
     std::cout << "\nMeeting number details:" << std::endl;
-    std::cout << "Original format: " << MEETING_NUMBER << std::endl;
-    std::cout << "Hex format: 0x" << std::hex << MEETING_NUMBER << std::dec << std::endl;
+    std::cout << "Original format: " << Config::getMeetingNumber() << std::endl;
+    std::cout << "Hex format: 0x" << std::hex << Config::getMeetingNumber() << std::dec << std::endl;
     
-    if (!checkMeetingExists(oauthToken, MEETING_NUMBER)) {
-        std::cerr << "Meeting verification failed" << std::endl;
+    if (!checkMeetingExists(oauthToken, Config::getMeetingNumber())) {
+        std::cerr << "Meeting verification failed. Please check your meeting number." << std::endl;
         g_main_loop_unref(mainLoop);
         return -1;
     }
-    std::cout << "Meeting " << MEETING_NUMBER << " exists and is accessible" << std::endl;
+    std::cout << "✅ Meeting " << Config::getMeetingNumber() << " exists and is accessible" << std::endl;
 
-    // Generate JWT token for SDK authentication
-    std::string appKey = "2YAIdaERS82YdStrg6iwuQ";
-    std::string appSecret = "bi996BXSPNrEaiGJXVh6ckCzdoNeJtKA";
-    
+    // Generate JWT token for SDK authentication using configuration
     nlohmann::json header = {
         {"alg", "HS256"},
         {"typ", "JWT"}
@@ -361,24 +376,24 @@ int main() {
     
     // Convert meeting number to string without UL suffix
     std::ostringstream oss;
-    oss << MEETING_NUMBER;
+    oss << Config::getMeetingNumber();
     std::string meetingNumberStr = oss.str();
     
     nlohmann::json payload = {
-        {"appKey", appKey},
+        {"appKey", Config::getAppKey()},
         {"exp", now + 3600},
         {"iat", now},
         {"mn", meetingNumberStr},
         {"role", 0},
-        {"sdkKey", appKey},
+        {"sdkKey", Config::getAppKey()},
         {"tokenExp", now + 3600}
     };
     
     std::cout << "JWT payload: " << payload << std::endl;
 
-    jwtToken = generateJWTToken(header, payload, appSecret);
+    jwtToken = generateJWTToken(header, payload, Config::getAppSecret());
     if (jwtToken.empty()) {
-        std::cerr << "Failed to generate JWT token" << std::endl;
+        std::cerr << "Failed to generate JWT token. Please check your app credentials." << std::endl;
         g_main_loop_unref(mainLoop);
         return -1;
     }

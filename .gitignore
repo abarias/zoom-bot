@@ -55,6 +55,10 @@ Desktop.ini
 *.pem
 secrets.txt
 credentials.json
+.env
+.env.local
+.env.production
+.env.development
 
 # Backup files
 *.backup
