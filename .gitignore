@@ -1,0 +1,97 @@
+# Build directories and artifacts
+build/
+**/build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Compiled binaries
+zoom_poc
+test_auth
+wav_converter
+*.exe
+*.out
+*.o
+*.so
+*.a
+*.dylib
+*.dll
+
+# IDE and editor files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/c_cpp_properties.json
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Zoom SDK (large file - should be downloaded separately)
+zoom-sdk-linux.tar.xz
+zoom-sdk/
+
+# Recording output directories
+recordings/
+*.pcm
+*.wav
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# OS generated files
+Thumbs.db
+Desktop.ini
+
+# Credentials and secrets (if any)
+*.key
+*.pem
+secrets.txt
+credentials.json
+
+# Backup files
+*.backup
+*.bak
+*_backup_*
+*_old.*
+
+# Core dumps
+core
+core.*
+
+# Node modules (if using any JS tools)
+node_modules/
+
+# Python cache (if using any Python tools)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Package files
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# Documentation build artifacts
+docs/_build/
+*.pdf
+
+# Test results
+test_results/
+coverage/
+
+# Local environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

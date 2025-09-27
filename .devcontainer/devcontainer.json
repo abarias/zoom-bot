@@ -1,0 +1,18 @@
+{
+  "name": "Zoom Bot Dev",
+  "dockerFile": "../Dockerfile",
+  "context": "..",
+  "remoteUser": "root",
+  "runArgs": ["--init"],
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "extensions": [
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools",
+    "ms-python.python"
+  ],
+  "mounts": [
+    "source=${localWorkspaceFolder}/src,target=/app/src,type=bind"
+  ]
+}
