@@ -16,6 +16,9 @@
 #include "meeting_service_components/meeting_participants_ctrl_interface.h"
 #include "meeting_service_components/meeting_raw_archiving_interface.h"
 
+// Our streaming system
+#include "audio_streamer.h"
+
 namespace ZoomBot {
 
 // Simple PCM writer that opens a .pcm file and appends bytes
@@ -30,7 +33,7 @@ private:
     std::ofstream ofs_;
 };
 
-// Delegates raw audio frames to per-participant PCM files
+// Delegates raw audio frames to per-participant PCM files and streams to processing service
 class AudioRawHandler : public ZOOM_SDK_NAMESPACE::IZoomSDKAudioRawDataDelegate {
 public:
     AudioRawHandler();
@@ -43,6 +46,12 @@ public:
     bool subscribe(bool withInterpreters = false);
     void unsubscribe();
     void setMeetingService(ZOOM_SDK_NAMESPACE::IMeetingService* svc) { meetingService_ = svc; }
+    
+    // Streaming configuration
+    bool enableStreaming(const std::string& backend_type = "tcp", 
+                        const std::string& config = "localhost:8888");
+    void disableStreaming();
+    bool isStreamingEnabled() const { return streamer_ && streamer_->isConnected(); }
     
     // WAV conversion utility
     static bool convertPCMToWAV(const std::string& pcmFilePath, const std::string& wavFilePath, 
@@ -61,10 +70,14 @@ private:
     std::unique_ptr<PCMFile> mixedFile_;
     std::unordered_map<uint32_t, std::unique_ptr<PCMFile>> userFiles_;
     ZOOM_SDK_NAMESPACE::IMeetingService* meetingService_ = nullptr; // weak ref
+    
+    // Streaming system
+    std::unique_ptr<AudioStreamer> streamer_;
 
     static bool ensureDir(const std::string& path);
     static std::string sanitize(const std::string& s);
     void writeToFile(PCMFile& file, AudioRawData* data_);
+    void streamAudioData(uint32_t user_id, const std::string& user_name, AudioRawData* data_);
     std::string displayNameForUser(uint32_t user_id);
 };
 

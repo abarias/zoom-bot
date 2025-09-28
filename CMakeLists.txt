@@ -26,9 +26,8 @@ add_executable(zoom_poc
     src/meeting_detector.cpp
     src/sdk_initializer.cpp
     src/audio_raw_handler.cpp
+    src/audio_streamer.cpp
     src/config.cpp)
-
-# Test executable
 add_executable(test_auth
     src/test_auth.cpp
     src/jwt_helper.cpp
@@ -37,7 +36,8 @@ add_executable(test_auth
 # WAV converter utility
 add_executable(wav_converter
     src/wav_converter.cpp
-    src/audio_raw_handler.cpp)
+    src/audio_raw_handler.cpp
+    src/audio_streamer.cpp)
 
 # Link SDK libs
 target_link_libraries(zoom_poc

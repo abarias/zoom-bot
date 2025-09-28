@@ -543,6 +543,16 @@ int main() {
         } else {
             std::cout << "\n[AUDIO] ✓ Raw audio subscription successful!" << std::endl;
             std::cout << "[AUDIO] Starting per-participant audio capture..." << std::endl;
+            
+            // Enable audio streaming to Python processing service
+            std::cout << "[STREAMING] Enabling audio streaming..." << std::endl;
+            bool streamingEnabled = audioHandler.enableStreaming("tcp", "localhost:8888");
+            if (streamingEnabled) {
+                std::cout << "[STREAMING] ✓ Audio streaming enabled!" << std::endl;
+                std::cout << "[STREAMING] Audio will be streamed to Python service for processing" << std::endl;
+            } else {
+                std::cout << "[STREAMING] ⚠ Audio streaming failed - continuing with file recording only" << std::endl;
+            }
         }
     } else {
         std::cout << "\n=== RECORDING PERMISSION DENIED ===" << std::endl;

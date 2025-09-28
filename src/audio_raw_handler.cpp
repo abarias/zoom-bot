@@ -66,9 +66,13 @@ AudioRawHandler::AudioRawHandler() {
     outDir_ = "recordings/" + timestampForFile();
     ensureDir("recordings");
     ensureDir(outDir_);
+    
+    // Initialize streaming system
+    streamer_ = std::make_unique<AudioStreamer>();
 }
 
 AudioRawHandler::~AudioRawHandler() {
+    disableStreaming();
     unsubscribe();
 }
 
@@ -276,6 +280,28 @@ void AudioRawHandler::unsubscribe() {
     userFiles_.clear();
 }
 
+bool AudioRawHandler::enableStreaming(const std::string& backend_type, const std::string& config) {
+    if (!streamer_) {
+        streamer_ = std::make_unique<AudioStreamer>();
+    }
+    
+    if (!streamer_->initialize(backend_type, config)) {
+        std::cerr << "[AUDIO] Failed to initialize audio streaming" << std::endl;
+        return false;
+    }
+    
+    streamer_->start();
+    std::cout << "[AUDIO] ✓ Audio streaming enabled (" << backend_type << " -> " << config << ")" << std::endl;
+    return true;
+}
+
+void AudioRawHandler::disableStreaming() {
+    if (streamer_) {
+        streamer_->stop();
+        std::cout << "[AUDIO] Audio streaming disabled" << std::endl;
+    }
+}
+
 void AudioRawHandler::writeToFile(PCMFile& file, AudioRawData* data_) {
     if (!data_) return;
     if (!data_->CanAddRef()) return; // ensure buffer validity beyond callback if needed
@@ -283,6 +309,20 @@ void AudioRawHandler::writeToFile(PCMFile& file, AudioRawData* data_) {
     file.write(data_->GetBuffer(), data_->GetBufferLen());
     file.flush();
     data_->Release();
+}
+
+void AudioRawHandler::streamAudioData(uint32_t user_id, const std::string& user_name, AudioRawData* data_) {
+    if (!data_ || !streamer_ || !streamer_->isConnected()) return;
+    
+    // Stream the audio data to our processing service
+    streamer_->queueAudio(
+        user_id, 
+        user_name,
+        data_->GetBuffer(), 
+        data_->GetBufferLen(),
+        data_->GetSampleRate(), 
+        data_->GetChannelNum()
+    );
 }
 
 void AudioRawHandler::onMixedAudioRawDataReceived(AudioRawData* data_) {
@@ -299,6 +339,9 @@ void AudioRawHandler::onMixedAudioRawDataReceived(AudioRawData* data_) {
         std::cout << "Writing mixed audio to " << path << std::endl;
     }
     writeToFile(*mixedFile_, data_);
+    
+    // Stream mixed audio (using special user_id 0 for mixed audio)
+    streamAudioData(0, "Mixed_Audio", data_);
 }
 
 void AudioRawHandler::onOneWayAudioRawDataReceived(AudioRawData* data_, uint32_t user_id) {
@@ -323,6 +366,13 @@ void AudioRawHandler::onOneWayAudioRawDataReceived(AudioRawData* data_, uint32_t
         it = userFiles_.emplace(user_id, std::move(file)).first;
     }
     writeToFile(*it->second, data_);
+    
+    // Stream individual participant audio
+    std::string user_name = displayNameForUser(user_id);
+    if (user_name.empty()) {
+        user_name = "User_" + std::to_string(user_id);
+    }
+    streamAudioData(user_id, user_name, data_);
 }
 
 void AudioRawHandler::onShareAudioRawDataReceived(AudioRawData* data_, uint32_t user_id) {
