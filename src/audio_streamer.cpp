@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <cstring>
 #include <sstream>
@@ -64,11 +65,21 @@ bool TCPStreamingBackend::connectToServer() {
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(connection_->port);
     
+    // Try to resolve hostname to IP address
     if (inet_pton(AF_INET, connection_->host.c_str(), &server_addr.sin_addr) <= 0) {
-        std::cerr << "[TCP] Invalid address: " << connection_->host << std::endl;
-        close(connection_->socket_fd);
-        connection_->socket_fd = -1;
-        return false;
+        // If inet_pton fails, try hostname resolution
+        struct hostent* host_entry = gethostbyname(connection_->host.c_str());
+        if (!host_entry) {
+            std::cerr << "[TCP] Failed to resolve hostname: " << connection_->host << std::endl;
+            close(connection_->socket_fd);
+            connection_->socket_fd = -1;
+            return false;
+        }
+        
+        // Copy the resolved IP address
+        memcpy(&server_addr.sin_addr, host_entry->h_addr_list[0], host_entry->h_length);
+        std::cout << "[TCP] Resolved " << connection_->host << " to " 
+                  << inet_ntoa(server_addr.sin_addr) << std::endl;
     }
     
     // Connect to server

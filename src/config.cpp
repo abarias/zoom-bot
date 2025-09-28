@@ -62,6 +62,14 @@ uint64_t Config::getMeetingNumber() { return meetingNumber_; }
 const std::string& Config::getMeetingPassword() { return meetingPassword_; }
 const std::string& Config::getBotUsername() { return botUsername_; }
 
+void Config::setMeetingNumber(uint64_t meetingNumber) {
+    meetingNumber_ = meetingNumber;
+}
+
+void Config::setMeetingPassword(const std::string& password) {
+    meetingPassword_ = password;
+}
+
 bool Config::isValid() {
     if (!loaded_) {
         std::cerr << "Configuration not loaded. Call loadFromEnvironment() first." << std::endl;
@@ -103,6 +111,43 @@ bool Config::isValid() {
         std::cerr << "Missing required environment variable: ZOOM_MEETING_PASSWORD" << std::endl;
         valid = false;
     }
+
+    return valid;
+}
+
+bool Config::areCredentialsValid() {
+    if (!loaded_) {
+        std::cerr << "Configuration not loaded. Call loadFromEnvironment() first." << std::endl;
+        return false;
+    }
+
+    bool valid = true;
+    
+    // Check OAuth credentials
+    if (clientId_.empty()) {
+        std::cerr << "Missing required environment variable: ZOOM_CLIENT_ID" << std::endl;
+        valid = false;
+    }
+    if (clientSecret_.empty()) {
+        std::cerr << "Missing required environment variable: ZOOM_CLIENT_SECRET" << std::endl;
+        valid = false;
+    }
+    if (accountId_.empty()) {
+        std::cerr << "Missing required environment variable: ZOOM_ACCOUNT_ID" << std::endl;
+        valid = false;
+    }
+
+    // Check SDK credentials
+    if (appKey_.empty()) {
+        std::cerr << "Missing required environment variable: ZOOM_APP_KEY" << std::endl;
+        valid = false;
+    }
+    if (appSecret_.empty()) {
+        std::cerr << "Missing required environment variable: ZOOM_APP_SECRET" << std::endl;
+        valid = false;
+    }
+
+    // Note: We don't check meeting configuration here - it will be provided via console
 
     return valid;
 }

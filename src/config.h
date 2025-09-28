@@ -37,10 +37,22 @@ public:
     static const std::string& getBotUsername();
 
     /**
+     * @brief Override meeting configuration (for console input)
+     */
+    static void setMeetingNumber(uint64_t meetingNumber);
+    static void setMeetingPassword(const std::string& password);
+
+    /**
      * @brief Validate that all required configuration is loaded
      * @return true if configuration is valid, false otherwise
      */
     static bool isValid();
+
+    /**
+     * @brief Validate only credentials (OAuth and SDK), not meeting details
+     * @return true if credentials are valid, false otherwise
+     */
+    static bool areCredentialsValid();
 
     /**
      * @brief Print configuration status (without sensitive values)

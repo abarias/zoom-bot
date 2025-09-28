@@ -12,6 +12,8 @@
 #include <unistd.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <algorithm>
+#include <cctype>
 
 // Zoom SDK includes
 #include "zoom_sdk.h"
@@ -298,6 +300,92 @@ bool waitForMeetingConnection(ZOOM_SDK_NAMESPACE::IMeetingService* meetingServic
     return true;
 }
 
+// Helper function to trim whitespace from a string
+std::string trim(const std::string& str) {
+    auto start = str.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    auto end = str.find_last_not_of(" \t\n\r");
+    return str.substr(start, end - start + 1);
+}
+
+// Helper function to remove spaces from meeting number and validate format
+std::string parseMeetingNumber(const std::string& input) {
+    std::string trimmed = trim(input);
+    std::string cleaned;
+    
+    // Remove all spaces
+    for (char c : trimmed) {
+        if (c != ' ') {
+            cleaned += c;
+        }
+    }
+    
+    // Validate that it contains only digits and is 11 characters long
+    if (cleaned.length() != 11) {
+        return "";
+    }
+    
+    for (char c : cleaned) {
+        if (!std::isdigit(c)) {
+            return "";
+        }
+    }
+    
+    return cleaned;
+}
+
+// Function to get meeting details from console input
+bool getMeetingDetailsFromConsole(std::string& meetingNumber, std::string& meetingPassword) {
+    std::cout << "\n🎥 Zoom Bot Meeting Setup" << std::endl;
+    std::cout << "=========================" << std::endl;
+    
+    // Get meeting number
+    std::cout << "\nEnter meeting number (format: XXX XXXX XXXX): ";
+    std::string meetingInput;
+    std::getline(std::cin, meetingInput);
+    
+    meetingNumber = parseMeetingNumber(meetingInput);
+    if (meetingNumber.empty()) {
+        std::cerr << "❌ Invalid meeting number format!" << std::endl;
+        std::cerr << "Expected format: XXX XXXX XXXX (11 digits with spaces)" << std::endl;
+        std::cerr << "Example: 123 4567 8901" << std::endl;
+        return false;
+    }
+    
+    std::cout << "✅ Meeting number parsed: " << meetingNumber << std::endl;
+    
+    // Get meeting password
+    std::cout << "Enter meeting password: ";
+    std::getline(std::cin, meetingPassword);
+    meetingPassword = trim(meetingPassword);
+    
+    if (meetingPassword.empty()) {
+        std::cerr << "❌ Meeting password cannot be empty!" << std::endl;
+        return false;
+    }
+    
+    std::cout << "✅ Meeting password entered" << std::endl;
+    
+    // Confirmation
+    std::cout << "\n📋 Meeting Details Summary:" << std::endl;
+    std::cout << "  Meeting Number: " << meetingNumber << std::endl;
+    std::cout << "  Password: " << std::string(meetingPassword.length(), '*') << std::endl;
+    std::cout << "\nProceed with these details? (y/N): ";
+    
+    std::string confirm;
+    std::getline(std::cin, confirm);
+    confirm = trim(confirm);
+    std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::tolower);
+    
+    if (confirm != "y" && confirm != "yes") {
+        std::cout << "❌ Meeting setup cancelled." << std::endl;
+        return false;
+    }
+    
+    std::cout << "✅ Meeting details confirmed!" << std::endl;
+    return true;
+}
+
 int main() {
     // Set up robust signal handling for graceful shutdown
     if (!setupSignalHandling()) {
@@ -316,34 +404,52 @@ int main() {
     // Log SDK version for diagnostics
     std::cout << "Zoom SDK Version: " << ZOOM_SDK_NAMESPACE::GetSDKVersion() << std::endl;
 
-    // Step 1: Load configuration from environment variables
-    if (!Config::loadFromEnvironment()) {
-        std::cerr << "\n❌ Configuration Error: Missing required environment variables." << std::endl;
+    // Step 1: Load configuration from environment variables (credentials only)
+    Config::loadFromEnvironment(); // Load what's available from env vars
+    
+    if (!Config::areCredentialsValid()) {
+        std::cerr << "\n❌ Configuration Error: Missing required Zoom credentials." << std::endl;
         std::cerr << "\nPlease set the following environment variables:" << std::endl;
         std::cerr << "  ZOOM_CLIENT_ID=your_client_id" << std::endl;
         std::cerr << "  ZOOM_CLIENT_SECRET=your_client_secret" << std::endl;
         std::cerr << "  ZOOM_ACCOUNT_ID=your_account_id" << std::endl;
         std::cerr << "  ZOOM_APP_KEY=your_app_key" << std::endl;
         std::cerr << "  ZOOM_APP_SECRET=your_app_secret" << std::endl;
-        std::cerr << "  ZOOM_MEETING_NUMBER=meeting_id" << std::endl;
-        std::cerr << "  ZOOM_MEETING_PASSWORD=meeting_password" << std::endl;
-        std::cerr << "  ZOOM_BOT_USERNAME=bot_name (optional, defaults to 'ZoomBot')" << std::endl;
+        std::cerr << "\nNote: Meeting number and password will be requested interactively." << std::endl;
         std::cerr << "\nExample:" << std::endl;
         std::cerr << "  export ZOOM_CLIENT_ID=your_client_id" << std::endl;
         std::cerr << "  export ZOOM_CLIENT_SECRET=your_client_secret" << std::endl;
-        std::cerr << "  # ... set other variables ..." << std::endl;
+        std::cerr << "  # ... set other credentials ..." << std::endl;
         std::cerr << "  ./zoom_poc" << std::endl;
         Config::printStatus();
         g_main_loop_unref(mainLoop);
         return -1;
     }
+
+    // Step 2: Get meeting details from console input
+    std::string meetingNumberStr, meetingPassword;
+    if (!getMeetingDetailsFromConsole(meetingNumberStr, meetingPassword)) {
+        std::cerr << "\n❌ Failed to get meeting details. Exiting." << std::endl;
+        g_main_loop_unref(mainLoop);
+        return -1;
+    }
+
+    // Convert meeting number string to uint64_t and set in config
+    uint64_t meetingNumber;
+    try {
+        meetingNumber = std::stoull(meetingNumberStr);
+        Config::setMeetingNumber(meetingNumber);
+        Config::setMeetingPassword(meetingPassword);
+    } catch (const std::exception& e) {
+        std::cerr << "\n❌ Error parsing meeting number: " << e.what() << std::endl;
+        g_main_loop_unref(mainLoop);
+        return -1;
+    }
     
     Config::printStatus();
-
-    // Step 2: Get OAuth and JWT tokens using configuration
-    std::string oauthToken, jwtToken;
     
-    // Get OAuth token using configuration
+    // Step 3: Get OAuth and JWT tokens using configuration
+    std::string oauthToken, jwtToken;    // Get OAuth token using configuration
     oauthToken = getZoomAccessToken(Config::getClientId(), Config::getClientSecret(), Config::getAccountId());
     if (oauthToken.empty()) {
         std::cerr << "Failed to get OAuth token. Please check your OAuth credentials." << std::endl;
@@ -377,13 +483,13 @@ int main() {
     // Convert meeting number to string without UL suffix
     std::ostringstream oss;
     oss << Config::getMeetingNumber();
-    std::string meetingNumberStr = oss.str();
+    std::string meetingNumberForJWT = oss.str();
     
     nlohmann::json payload = {
         {"appKey", Config::getAppKey()},
         {"exp", now + 3600},
         {"iat", now},
-        {"mn", meetingNumberStr},
+        {"mn", meetingNumberForJWT},
         {"role", 0},
         {"sdkKey", Config::getAppKey()},
         {"tokenExp", now + 3600}
@@ -398,7 +504,7 @@ int main() {
         return -1;
     }
 
-    // Step 2: Initialize SDK
+    // Step 4: Initialize SDK
     auto initResult = SDKInitializer::initializeSDK();
     if (!initResult.success) {
         std::cerr << initResult.errorMessage << std::endl;
@@ -406,7 +512,7 @@ int main() {
         return -1;
     }
 
-    // Step 3: Authenticate SDK
+    // Step 5: Authenticate SDK
     AuthEventHandler authHandler(mainLoop);
     if (!SDKInitializer::authenticateSDK(initResult.authService, &authHandler, mainLoop, jwtToken)) {
         SDKInitializer::cleanup(initResult);
@@ -414,7 +520,7 @@ int main() {
         return -1;
     }
 
-    // Step 4: Join meeting
+    // Step 6: Join meeting
     MeetingEventHandler meetingEventHandler(mainLoop);
     if (!joinMeeting(initResult.meetingService, &meetingEventHandler, mainLoop)) {
         SDKInitializer::cleanup(initResult);
@@ -422,7 +528,7 @@ int main() {
         return -1;
     }
 
-    // Step 5: Wait for meeting connection with enhanced detection
+    // Step 7: Wait for meeting connection with enhanced detection
     if (!waitForMeetingConnection(initResult.meetingService, &meetingEventHandler, mainLoop)) {
         SDKInitializer::cleanup(initResult);
         g_main_loop_unref(mainLoop);
@@ -442,7 +548,7 @@ int main() {
         }
     }
 
-    // Step 6: Subscribe to raw audio and keep running
+    // Step 8: Subscribe to raw audio and keep running
     // Join VoIP so we actually receive audio streams
     if (initResult.meetingService && initResult.meetingService->GetMeetingAudioController()) {
         auto* audioCtrl = initResult.meetingService->GetMeetingAudioController();
