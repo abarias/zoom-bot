@@ -3,6 +3,14 @@ project(zoom_poc)
 
 set(CMAKE_CXX_STANDARD 14)
 
+# Debug configuration
+set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
+
+# Export compile commands for better IntelliSense
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Find libcurl package
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
