@@ -43,6 +43,12 @@ public:
     static void setMeetingPassword(const std::string& password);
 
     /**
+     * @brief JWT token management
+     */
+    static void setJWTToken(const std::string& token);
+    static const std::string& getJWTToken();
+
+    /**
      * @brief Validate that all required configuration is loaded
      * @return true if configuration is valid, false otherwise
      */
@@ -76,6 +82,9 @@ private:
     static uint64_t meetingNumber_;
     static std::string meetingPassword_;
     static std::string botUsername_;
+
+    // Runtime tokens
+    static std::string jwtToken_;
 
     static bool loaded_;
 };

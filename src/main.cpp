@@ -26,10 +26,11 @@
 #include "meeting_event_handler.h"
 #include "meeting_detector.h"
 #include "sdk_initializer.h"
-#include "zoom_auth.h"
-#include "jwt_helper.h"
 #include "audio_raw_handler.h"
 #include "config.h"
+#include "token_manager.h"
+#include "meeting_setup.h"
+#include "audio_manager.h"
 
 using namespace ZoomBot;
 
@@ -40,51 +41,28 @@ ZOOM_SDK_NAMESPACE::IMeetingService* globalMeetingService = nullptr;
 
 // Signal handler for clean shutdown
 void signalHandler(int signal) {
-    std::cout << "\n\n[SHUTDOWN] Received signal " << signal << " (";
-    switch(signal) {
-        case SIGINT: std::cout << "SIGINT - Ctrl+C"; break;
-        case SIGTERM: std::cout << "SIGTERM - Termination"; break;
-        default: std::cout << "Unknown"; break;
-    }
-    std::cout << "). Initiating clean shutdown..." << std::endl;
-    std::cout.flush(); // Ensure output is visible immediately
-    
-    std::cout << "[DEBUG] Setting shouldExit flag..." << std::endl;
-    shouldExit.store(true);
-    std::cout << "[DEBUG] shouldExit set to: " << shouldExit.load() << std::endl;
+    std::cout << "\n[SHUTDOWN] Received signal " << signal << " - initiating clean shutdown..." << std::endl;
     std::cout.flush();
+    
+    shouldExit.store(true);
     
     // Stop recording if active
     if (globalAudioHandler) {
-        std::cout << "[SHUTDOWN] Stopping raw recording..." << std::endl;
-        std::cout.flush();
+        std::cout << "[SHUTDOWN] Stopping audio recording..." << std::endl;
         globalAudioHandler->stopRecording();
-        
-        std::cout << "[SHUTDOWN] Unsubscribing from audio data..." << std::endl;
-        std::cout.flush();
         globalAudioHandler->unsubscribe();
-    } else {
-        std::cout << "[DEBUG] globalAudioHandler is null" << std::endl;
-        std::cout.flush();
     }
     
     // Leave meeting
     if (globalMeetingService) {
         std::cout << "[SHUTDOWN] Leaving meeting..." << std::endl;
-        std::cout.flush();
         auto leaveResult = globalMeetingService->Leave(ZOOM_SDK_NAMESPACE::LEAVE_MEETING);
         if (leaveResult == ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
-            std::cout << "[SHUTDOWN] ✓ Left meeting successfully" << std::endl;
-        } else {
-            std::cout << "[SHUTDOWN] Failed to leave meeting, error: " << leaveResult << std::endl;
+            std::cout << "[SHUTDOWN] ✓ Left meeting" << std::endl;
         }
-        std::cout.flush();
-    } else {
-        std::cout << "[DEBUG] globalMeetingService is null" << std::endl;
-        std::cout.flush();
     }
     
-    std::cout << "[SHUTDOWN] Clean shutdown completed. shouldExit = " << shouldExit.load() << std::endl;
+    std::cout << "[SHUTDOWN] Shutdown complete" << std::endl;
     std::cout.flush();
 }
 
@@ -300,6 +278,14 @@ bool waitForMeetingConnection(ZOOM_SDK_NAMESPACE::IMeetingService* meetingServic
     return true;
 }
 
+// Function declarations
+bool setupEnvironmentAndCredentials();
+bool getMeetingDetailsFromUser();
+bool authenticateWithZoom();
+bool initializeSDKAndJoinMeeting(GMainLoop* mainLoop, ZoomBot::SDKInitializer::InitResult& initResult, MeetingEventHandler& eventHandler);
+bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, ZoomBot::AudioRawHandler& audioHandler);
+void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, MeetingEventHandler& eventHandler);
+
 // Helper function to trim whitespace from a string
 std::string trim(const std::string& str) {
     auto start = str.find_first_not_of(" \t\n\r");
@@ -387,360 +373,221 @@ bool getMeetingDetailsFromConsole(std::string& meetingNumber, std::string& meeti
 }
 
 int main() {
-    // Set up robust signal handling for graceful shutdown
+    // Set up signal handling
     if (!setupSignalHandling()) {
         std::cerr << "Failed to set up signal handling" << std::endl;
         return -1;
     }
-    std::cout << "Registered signal handlers for graceful shutdown (Ctrl+C)" << std::endl;
+    std::cout << "✓ Signal handlers registered" << std::endl;
 
-    // Initialize GMainLoop for SDK callbacks
+    // Initialize GMainLoop
     GMainLoop* mainLoop = g_main_loop_new(nullptr, FALSE);
     if (!mainLoop) {
         std::cerr << "Failed to create GMainLoop" << std::endl;
         return -1;
     }
-    std::cout << "Created GMainLoop for handling SDK callbacks" << std::endl;
-    // Log SDK version for diagnostics
+    std::cout << "✓ GMainLoop initialized" << std::endl;
+    
     std::cout << "Zoom SDK Version: " << ZOOM_SDK_NAMESPACE::GetSDKVersion() << std::endl;
 
-    // Step 1: Load configuration from environment variables (credentials only)
-    Config::loadFromEnvironment(); // Load what's available from env vars
+    // Step 1: Setup environment and credentials
+    if (!setupEnvironmentAndCredentials()) {
+        g_main_loop_unref(mainLoop);
+        return -1;
+    }
+
+    // Step 2: Get meeting details from user
+    if (!getMeetingDetailsFromUser()) {
+        g_main_loop_unref(mainLoop);
+        return -1;
+    }
+
+    // Step 3: Authenticate with Zoom
+    if (!authenticateWithZoom()) {
+        g_main_loop_unref(mainLoop);
+        return -1;
+    }
+
+    // Step 4: Initialize SDK and join meeting
+    ZoomBot::SDKInitializer::InitResult initResult;
+    MeetingEventHandler eventHandler(mainLoop);
     
-    if (!Config::areCredentialsValid()) {
-        std::cerr << "\n❌ Configuration Error: Missing required Zoom credentials." << std::endl;
-        std::cerr << "\nPlease set the following environment variables:" << std::endl;
-        std::cerr << "  ZOOM_CLIENT_ID=your_client_id" << std::endl;
-        std::cerr << "  ZOOM_CLIENT_SECRET=your_client_secret" << std::endl;
-        std::cerr << "  ZOOM_ACCOUNT_ID=your_account_id" << std::endl;
-        std::cerr << "  ZOOM_APP_KEY=your_app_key" << std::endl;
-        std::cerr << "  ZOOM_APP_SECRET=your_app_secret" << std::endl;
-        std::cerr << "\nNote: Meeting number and password will be requested interactively." << std::endl;
-        std::cerr << "\nExample:" << std::endl;
-        std::cerr << "  export ZOOM_CLIENT_ID=your_client_id" << std::endl;
-        std::cerr << "  export ZOOM_CLIENT_SECRET=your_client_secret" << std::endl;
-        std::cerr << "  # ... set other credentials ..." << std::endl;
-        std::cerr << "  ./zoom_poc" << std::endl;
-        Config::printStatus();
+    if (!initializeSDKAndJoinMeeting(mainLoop, initResult, eventHandler)) {
         g_main_loop_unref(mainLoop);
         return -1;
     }
 
-    // Step 2: Get meeting details from console input
-    std::string meetingNumberStr, meetingPassword;
-    if (!getMeetingDetailsFromConsole(meetingNumberStr, meetingPassword)) {
-        std::cerr << "\n❌ Failed to get meeting details. Exiting." << std::endl;
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
+    std::cout << "✓ Successfully joined the meeting!" << std::endl;
 
-    // Convert meeting number string to uint64_t and set in config
-    uint64_t meetingNumber;
-    try {
-        meetingNumber = std::stoull(meetingNumberStr);
-        Config::setMeetingNumber(meetingNumber);
-        Config::setMeetingPassword(meetingPassword);
-    } catch (const std::exception& e) {
-        std::cerr << "\n❌ Error parsing meeting number: " << e.what() << std::endl;
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-    
-    Config::printStatus();
-    
-    // Step 3: Get OAuth and JWT tokens using configuration
-    std::string oauthToken, jwtToken;    // Get OAuth token using configuration
-    oauthToken = getZoomAccessToken(Config::getClientId(), Config::getClientSecret(), Config::getAccountId());
-    if (oauthToken.empty()) {
-        std::cerr << "Failed to get OAuth token. Please check your OAuth credentials." << std::endl;
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-    std::cout << "✅ Got OAuth token: " << oauthToken.substr(0, 20) << "..." << std::endl;
-    std::cout << "Skipping ZAK token (not needed for participant join)" << std::endl;
-    
-    // Verify meeting exists
-    std::cout << "\nMeeting number details:" << std::endl;
-    std::cout << "Original format: " << Config::getMeetingNumber() << std::endl;
-    std::cout << "Hex format: 0x" << std::hex << Config::getMeetingNumber() << std::dec << std::endl;
-    
-    if (!checkMeetingExists(oauthToken, Config::getMeetingNumber())) {
-        std::cerr << "Meeting verification failed. Please check your meeting number." << std::endl;
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-    std::cout << "✅ Meeting " << Config::getMeetingNumber() << " exists and is accessible" << std::endl;
-
-    // Generate JWT token for SDK authentication using configuration
-    nlohmann::json header = {
-        {"alg", "HS256"},
-        {"typ", "JWT"}
-    };
-    
-    auto now = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    
-    // Convert meeting number to string without UL suffix
-    std::ostringstream oss;
-    oss << Config::getMeetingNumber();
-    std::string meetingNumberForJWT = oss.str();
-    
-    nlohmann::json payload = {
-        {"appKey", Config::getAppKey()},
-        {"exp", now + 3600},
-        {"iat", now},
-        {"mn", meetingNumberForJWT},
-        {"role", 0},
-        {"sdkKey", Config::getAppKey()},
-        {"tokenExp", now + 3600}
-    };
-    
-    std::cout << "JWT payload: " << payload << std::endl;
-
-    jwtToken = generateJWTToken(header, payload, Config::getAppSecret());
-    if (jwtToken.empty()) {
-        std::cerr << "Failed to generate JWT token. Please check your app credentials." << std::endl;
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-
-    // Step 4: Initialize SDK
-    auto initResult = SDKInitializer::initializeSDK();
-    if (!initResult.success) {
-        std::cerr << initResult.errorMessage << std::endl;
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-
-    // Step 5: Authenticate SDK
-    AuthEventHandler authHandler(mainLoop);
-    if (!SDKInitializer::authenticateSDK(initResult.authService, &authHandler, mainLoop, jwtToken)) {
-        SDKInitializer::cleanup(initResult);
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-
-    // Step 6: Join meeting
-    MeetingEventHandler meetingEventHandler(mainLoop);
-    if (!joinMeeting(initResult.meetingService, &meetingEventHandler, mainLoop)) {
-        SDKInitializer::cleanup(initResult);
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-
-    // Step 7: Wait for meeting connection with enhanced detection
-    if (!waitForMeetingConnection(initResult.meetingService, &meetingEventHandler, mainLoop)) {
-        SDKInitializer::cleanup(initResult);
-        g_main_loop_unref(mainLoop);
-        return -1;
-    }
-
-    std::cout << "Successfully joined the meeting!" << std::endl;
-
-    // Register recording event handler for raw data permission callbacks
-    if (initResult.meetingService && initResult.meetingService->GetMeetingRecordingController()) {
-        auto* recordingCtrl = initResult.meetingService->GetMeetingRecordingController();
-        auto result = recordingCtrl->SetEvent(&meetingEventHandler);
-        if (result == ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
-            std::cout << "Recording event handler registered for raw data permission tracking" << std::endl;
-        } else {
-            std::cerr << "Warning: Failed to register recording event handler: " << result << std::endl;
-        }
-    }
-
-    // Step 8: Subscribe to raw audio and keep running
-    // Join VoIP so we actually receive audio streams
-    if (initResult.meetingService && initResult.meetingService->GetMeetingAudioController()) {
-        auto* audioCtrl = initResult.meetingService->GetMeetingAudioController();
-        // Optional: don't play audio locally to avoid feedback in headless env
-        audioCtrl->EnablePlayMeetingAudio(false);
-        auto je = audioCtrl->JoinVoip();
-        std::cout << "JoinVoip result: " << je << std::endl;
-    }
-
+    // Step 5: Setup audio recording
     ZoomBot::AudioRawHandler audioHandler;
-    audioHandler.setMeetingService(initResult.meetingService);
-    
-    // Set global pointers for signal handler cleanup
     globalAudioHandler = &audioHandler;
     globalMeetingService = initResult.meetingService;
-    std::cout << "[DEBUG] Global pointers set - audioHandler: " << globalAudioHandler 
-              << ", meetingService: " << globalMeetingService << std::endl;
-    
-    // First request recording permission from host
-    bool canProceedWithRecording = false;
-    if (!audioHandler.requestRecordingPermission()) {
-        std::cerr << "Warning: Could not request recording permission from host." << std::endl;
-        std::cerr << "This may be because the meeting doesn't support recording requests," << std::endl;
-        std::cerr << "or the bot doesn't have permission to request recording." << std::endl;
-        std::cerr << "Will attempt raw audio subscription without explicit permission." << std::endl;
-        // Allow proceeding without explicit permission in case raw data is available anyway
-        canProceedWithRecording = true;
-    } else {
-        std::cout << "Recording permission requested. Waiting for host approval..." << std::endl;
-        // Wait up to 30 seconds for host response
-        int waitSeconds = 30;
-        int waited = 0;
-        while (waited < waitSeconds && !meetingEventHandler.recordingPermissionGranted) {
-            // Check for exit signal
-            if (shouldExit.load()) {
-                std::cout << "[DEBUG] Exit signal received during recording permission wait, aborting..." << std::endl;
-                return -1;
-            }
-            
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            waited++;
-            // Allow GLib to process callbacks
-            while (g_main_context_iteration(nullptr, FALSE)) {}
-        }
-        
-        if (meetingEventHandler.recordingPermissionGranted) {
-            std::cout << "Host granted recording permission! Starting raw recording..." << std::endl;
-            // Give a moment for the permission to propagate through the SDK
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            
-            // Start raw recording - this should enable raw data access
-            bool recordingStarted = audioHandler.startRecording();
-            if (recordingStarted) {
-                std::cout << "Raw recording started successfully. Raw data access should now be available." << std::endl;
-                // Give recording a moment to initialize
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                canProceedWithRecording = true;
-            } else {
-                std::cerr << "Failed to start raw recording despite having permission." << std::endl;
-                std::cerr << "Will still attempt raw audio subscription in case it works anyway." << std::endl;
-                canProceedWithRecording = true;
-            }
-        } else if (meetingEventHandler.recordingPermissionDenied) {
-            std::cerr << "Host explicitly DENIED recording permission." << std::endl;
-            std::cerr << "Bot will respect the host's decision and will NOT attempt to record." << std::endl;
-            canProceedWithRecording = false;
-        } else {
-            std::cerr << "Host did not respond to recording permission request (timeout)." << std::endl;
-            std::cerr << "This could mean:" << std::endl;
-            std::cerr << "1. Host didn't see or respond to the request" << std::endl;
-            std::cerr << "2. Host is not present to approve the request" << std::endl;
-            std::cerr << "3. Meeting settings don't require explicit approval" << std::endl;
-            std::cerr << "Bot will attempt recording in case it's automatically allowed." << std::endl;
-            canProceedWithRecording = true;
-        }
-    }
-    
-    // Wait up to 20s for VOIP to actually join before subscribing
-    if (!waitForVoipJoin(initResult.meetingService, 20)) {
-        std::cerr << "VoIP join failed or timed out." << std::endl;
-        if (!canProceedWithRecording) {
-            std::cerr << "Cannot proceed with recording without VoIP and without recording permission." << std::endl;
-        }
-    }
-    
-    bool audioSubscribed = false;
-    if (canProceedWithRecording) {
-        std::cout << "\n[AUDIO] Attempting to subscribe to raw audio data..." << std::endl;
-        audioSubscribed = audioHandler.subscribe(false);
-        if (!audioSubscribed) {
-            std::cout << "\n=== AUDIO SUBSCRIPTION FAILED ===" << std::endl;
-            std::cout << "Raw audio capture could not be enabled. This is likely because:" << std::endl;
-            std::cout << "1. Host has not granted recording permission" << std::endl;
-            std::cout << "2. Meeting doesn't support raw audio capture" << std::endl;
-            std::cout << "3. Audio raw data helper is not available" << std::endl;
-            std::cout << "\nThe bot will remain in the meeting but won't capture audio." << std::endl;
-            std::cout << "=========================================" << std::endl;
-        } else {
-            std::cout << "\n[AUDIO] ✓ Raw audio subscription successful!" << std::endl;
-            std::cout << "[AUDIO] Starting per-participant audio capture..." << std::endl;
-            
-            // Enable audio streaming to Python processing service
-            std::cout << "[STREAMING] Enabling audio streaming..." << std::endl;
-            bool streamingEnabled = audioHandler.enableStreaming("tcp", "localhost:8888");
-            if (streamingEnabled) {
-                std::cout << "[STREAMING] ✓ Audio streaming enabled!" << std::endl;
-                std::cout << "[STREAMING] Audio will be streamed to Python service for processing" << std::endl;
-            } else {
-                std::cout << "[STREAMING] ⚠ Audio streaming failed - continuing with file recording only" << std::endl;
-            }
-        }
-    } else {
-        std::cout << "\n=== RECORDING PERMISSION DENIED ===" << std::endl;
-        std::cout << "Bot will NOT attempt to subscribe to raw audio data because:" << std::endl;
-        std::cout << "- Recording permission was not granted by the host" << std::endl;
-        std::cout << "- Respecting meeting privacy and host's decision" << std::endl;
-        std::cout << "\nThe bot will remain in the meeting but will NOT capture audio." << std::endl;
-        std::cout << "To record audio, the host must explicitly grant recording permission." << std::endl;
-        std::cout << "=======================================" << std::endl;
-    }
-    
-    if (audioSubscribed) {
-        std::cout << "\nBot is now in the meeting and recording per-participant PCM in ./recordings." << std::endl;
-        std::cout << "Press Ctrl+C to exit, or type 'quit' + Enter if Ctrl+C doesn't work..." << std::endl;
-        std::cout << "Note: When you stop recording, all PCM files will be automatically converted to WAV format for easy playback." << std::endl;
-    } else {
-        std::cout << "\nBot is now in the meeting but is NOT recording audio." << std::endl;
-        std::cout << "Press Ctrl+C to exit, or type 'quit' + Enter if Ctrl+C doesn't work..." << std::endl;
-        if (!canProceedWithRecording) {
-            std::cout << "Recording was disabled because the host did not grant recording permission." << std::endl;
-        }
-    }
-    std::cout << "[DEBUG] About to enter main loop, shouldExit = " << shouldExit.load() << std::endl;
-    std::cout.flush();
-    
-    int loopCount = 0;
-    std::cout << "[DEBUG] Entering main loop now..." << std::endl;
-    std::cout.flush();
-    
-    // Keep running as long as our enhanced detection considered us joined and no exit signal received
-    while (true) {
-        // Check exit condition first - this is our primary exit mechanism
-        if (shouldExit.load()) {
-            std::cout << "\n[SHUTDOWN] Exit signal detected, breaking main loop..." << std::endl;
-            std::cout.flush();
-            break;
-        }
-        
-        // Check if meeting is still active
-        if (!meetingEventHandler.meetingJoined) {
-            std::cout << "\n[MEETING] Meeting left detected, breaking main loop..." << std::endl;
-            std::cout.flush();
-            break;
-        }
-        
-        // Process GLib events with timeout to ensure responsiveness
-        g_main_context_iteration(nullptr, FALSE);
-        
-        // Sleep for a short time to prevent busy waiting
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        // Debug output every 50 iterations (5 seconds)
-        loopCount++;
-        if (loopCount % 50 == 0) {
-            std::cout << "[DEBUG] Main loop running, shouldExit = " << shouldExit.load() 
-                      << ", meetingJoined = " << meetingEventHandler.meetingJoined << std::endl;
-            std::cout.flush();
-        }
-        
-        // Check meeting status
-        auto st = initResult.meetingService->GetMeetingStatus();
-        if (st == ZOOM_SDK_NAMESPACE::MEETING_STATUS_FAILED || st == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IDLE) {
-            std::cout << "\n[MEETING] Meeting ended (status: " << st << "), exiting..." << std::endl;
-            break;
-        }
-    }
-    
-    // Check if we're exiting due to signal
-    if (shouldExit.load()) {
-        std::cout << "\n[SHUTDOWN] Graceful shutdown initiated..." << std::endl;
+
+    if (!setupAudioRecording(initResult.meetingService, audioHandler)) {
+        std::cout << "⚠ Audio recording setup failed - continuing without recording" << std::endl;
     }
 
-    // Unsubscribe before leaving
-    audioHandler.unsubscribe();
-    
-    // Clear global pointers
-    globalAudioHandler = nullptr;
-    globalMeetingService = nullptr;
+    // Step 6: Run the meeting loop
+    std::cout << "\nBot is active. Press Ctrl+C to exit..." << std::endl;
+    runMeetingLoop(initResult.meetingService, eventHandler);
 
     // Cleanup
+    audioHandler.unsubscribe();
+    globalAudioHandler = nullptr;
+    globalMeetingService = nullptr;
     SDKInitializer::cleanup(initResult);
     g_main_loop_unref(mainLoop);
     
     return 0;
+}
+
+bool setupEnvironmentAndCredentials() {
+    Config::loadFromEnvironment();
+    
+    if (!Config::areCredentialsValid()) {
+        std::cerr << "\n❌ Missing Zoom credentials. Please set:" << std::endl;
+        std::cerr << "  ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_ACCOUNT_ID" << std::endl;
+        std::cerr << "  ZOOM_APP_KEY, ZOOM_APP_SECRET" << std::endl;
+        return false;
+    }
+    
+    std::cout << "✓ Credentials loaded" << std::endl;
+    return true;
+}
+
+bool getMeetingDetailsFromUser() {
+    auto meetingDetails = ZoomBot::MeetingSetup::getMeetingDetailsFromConsole();
+    
+    if (!meetingDetails.success) {
+        std::cerr << "❌ " << meetingDetails.errorMessage << std::endl;
+        return false;
+    }
+
+    try {
+        uint64_t meetingNumber = std::stoull(meetingDetails.meetingNumber);
+        Config::setMeetingNumber(meetingNumber);
+        Config::setMeetingPassword(meetingDetails.password);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "❌ Error parsing meeting number: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool authenticateWithZoom() {
+    // Get OAuth token
+    auto oauthResult = ZoomBot::TokenManager::getOAuthToken(
+        Config::getClientId(), 
+        Config::getClientSecret(), 
+        Config::getAccountId()
+    );
+    
+    if (!oauthResult.success) {
+        std::cerr << "❌ " << oauthResult.errorMessage << std::endl;
+        return false;
+    }
+
+    // Verify meeting exists
+    if (!ZoomBot::TokenManager::verifyMeetingExists(oauthResult.token, Config::getMeetingNumber())) {
+        return false;
+    }
+
+    // Generate JWT token
+    auto jwtResult = ZoomBot::TokenManager::generateJWTToken(
+        Config::getAppKey(),
+        Config::getAppSecret(),
+        Config::getMeetingNumber()
+    );
+    
+    if (!jwtResult.success) {
+        std::cerr << "❌ " << jwtResult.errorMessage << std::endl;
+        return false;
+    }
+
+    // Store JWT token for SDK authentication
+    Config::setJWTToken(jwtResult.token);
+    return true;
+}
+
+bool initializeSDKAndJoinMeeting(GMainLoop* mainLoop, ZoomBot::SDKInitializer::InitResult& initResult, MeetingEventHandler& eventHandler) {
+    // Initialize SDK
+    initResult = SDKInitializer::initializeSDK();
+    if (!initResult.success) {
+        std::cerr << "❌ " << initResult.errorMessage << std::endl;
+        return false;
+    }
+    std::cout << "✓ SDK initialized" << std::endl;
+
+    // Authenticate SDK
+    AuthEventHandler authHandler(mainLoop);
+    if (!SDKInitializer::authenticateSDK(initResult.authService, &authHandler, mainLoop, Config::getJWTToken())) {
+        std::cerr << "❌ SDK authentication failed" << std::endl;
+        return false;
+    }
+    std::cout << "✓ SDK authenticated" << std::endl;
+
+    // Join meeting
+    if (!joinMeeting(initResult.meetingService, &eventHandler, mainLoop)) {
+        std::cerr << "❌ Failed to join meeting" << std::endl;
+        return false;
+    }
+
+    // Wait for connection
+    if (!waitForMeetingConnection(initResult.meetingService, &eventHandler, mainLoop)) {
+        std::cerr << "❌ Meeting connection failed" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, ZoomBot::AudioRawHandler& audioHandler) {
+    auto audioResult = ZoomBot::AudioManager::setupAudioCapture(meetingService, audioHandler);
+    
+    if (audioResult.success) {
+        std::cout << "✓ " << audioResult.statusMessage << std::endl;
+        if (audioResult.streamingEnabled) {
+            std::cout << "✓ Audio streaming to Python service enabled" << std::endl;
+        }
+        std::cout << "\nRecording to: ./recordings/" << std::endl;
+        return true;
+    } else {
+        std::cout << "✗ " << audioResult.statusMessage << std::endl;
+        return false;
+    }
+}
+
+void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, MeetingEventHandler& eventHandler) {
+    int loopCount = 0;
+    
+    while (true) {
+        if (shouldExit.load()) {
+            std::cout << "\n[SHUTDOWN] Graceful shutdown initiated..." << std::endl;
+            break;
+        }
+        
+        if (!eventHandler.meetingJoined) {
+            std::cout << "\n[MEETING] Left meeting" << std::endl;
+            break;
+        }
+        
+        // Process events
+        g_main_context_iteration(nullptr, FALSE);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        // Periodic status (reduced frequency)
+        loopCount++;
+        if (loopCount % 100 == 0) { // Every 10 seconds instead of 5
+            std::cout << "[STATUS] Bot active, recording..." << std::endl;
+        }
+        
+        // Check meeting status
+        auto status = meetingService->GetMeetingStatus();
+        if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_FAILED || 
+            status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IDLE) {
+            std::cout << "\n[MEETING] Meeting ended" << std::endl;
+            break;
+        }
+    }
 }

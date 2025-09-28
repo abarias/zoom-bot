@@ -75,15 +75,8 @@ std::string HttpClient::request(const std::string& url,
     }
 
     struct curl_slist* headersList = NULL;
-    std::cout << "\nRequest details:" << std::endl;
-    std::cout << "URL: " << url << std::endl;
-    std::cout << "Headers:" << std::endl;
     for (const auto& header : headers) {
-        std::cout << "  " << header << std::endl;
         headersList = curl_slist_append(headersList, header.c_str());
-    }
-    if (isPost && !postFields.empty()) {
-        std::cout << "POST data: " << postFields << std::endl;
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -111,10 +104,6 @@ std::string HttpClient::request(const std::string& url,
         throw std::runtime_error(std::string("CURL request failed: ") + curl_easy_strerror(res));
     }
 
-    std::cout << "\nResponse received:" << std::endl;
-    std::cout << "HTTP Status: " << http_code << std::endl;
-    std::cout << "Response body: " << readBuffer << std::endl;
-
     if (http_code != 200) {
         throw std::runtime_error("HTTP request failed with code " + std::to_string(http_code) + ": " + readBuffer);
     }
@@ -138,21 +127,15 @@ std::string getZoomAccessToken(const std::string& clientId, const std::string& c
 
     // Prepare post data
     std::string postData = "grant_type=" + grantType + "&account_id=" + accountId;
-    std::cout << "Post data: " << postData << std::endl;
 
     try {
         HttpClient client;
-        std::cout << "Sending request..." << std::endl;
         std::string response = client.request(url, headers, true, postData);
-        std::cout << "Response received, length: " << response.length() << " chars" << std::endl;
-        std::cout << "Response: " << response << std::endl;
         
         nlohmann::json jsonResponse = nlohmann::json::parse(response);
         
         if (jsonResponse.contains("access_token")) {
-            std::string token = jsonResponse["access_token"].get<std::string>();
-            std::cout << "Successfully got access token" << std::endl;
-            return token;
+            return jsonResponse["access_token"].get<std::string>();
         } else {
             throw std::runtime_error("Response does not contain access_token field");
         }

@@ -35,7 +35,10 @@ add_executable(zoom_poc
     src/sdk_initializer.cpp
     src/audio_raw_handler.cpp
     src/audio_streamer.cpp
-    src/config.cpp)
+    src/config.cpp
+    src/token_manager.cpp
+    src/meeting_setup.cpp
+    src/audio_manager.cpp)
 add_executable(test_auth
     src/test_auth.cpp
     src/jwt_helper.cpp

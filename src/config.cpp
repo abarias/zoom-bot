@@ -13,6 +13,7 @@ std::string Config::appSecret_;
 uint64_t Config::meetingNumber_ = 0;
 std::string Config::meetingPassword_;
 std::string Config::botUsername_;
+std::string Config::jwtToken_;
 bool Config::loaded_ = false;
 
 std::string Config::getEnvVar(const std::string& name, const std::string& defaultValue) {
@@ -68,6 +69,14 @@ void Config::setMeetingNumber(uint64_t meetingNumber) {
 
 void Config::setMeetingPassword(const std::string& password) {
     meetingPassword_ = password;
+}
+
+void Config::setJWTToken(const std::string& token) {
+    jwtToken_ = token;
+}
+
+const std::string& Config::getJWTToken() {
+    return jwtToken_;
 }
 
 bool Config::isValid() {

@@ -108,34 +108,15 @@ bool AudioRawHandler::requestRecordingPermission() {
         return false;
     }
     
-    std::cout << "[RECORDING] Recording permission requests are supported. Requesting permission from host..." << std::endl;
+    std::cout << "[RECORDING] Requesting recording permission from host..." << std::endl;
     
     auto result = recordingController->RequestLocalRecordingPrivilege();
     
     if (result == ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
-        std::cout << "[RECORDING] ✓ Recording permission request sent to host successfully!" << std::endl;
-        std::cout << "[RECORDING] Waiting for host approval (up to 30 seconds)..." << std::endl;
+        std::cout << "[RECORDING] ✓ Permission request sent" << std::endl;
         return true;
     } else {
-        std::cerr << "[RECORDING] Failed to request recording permission from host, error: " << result;
-        switch(result) {
-            case ZOOM_SDK_NAMESPACE::SDKERR_NO_PERMISSION:
-                std::cerr << " (NO_PERMISSION - Not allowed to request recording permission)";
-                break;
-            case ZOOM_SDK_NAMESPACE::SDKERR_MEETING_DONT_SUPPORT_FEATURE:
-                std::cerr << " (FEATURE_NOT_SUPPORTED - Meeting doesn't support recording requests)";
-                break;
-            case ZOOM_SDK_NAMESPACE::SDKERR_NOT_IN_MEETING:
-                std::cerr << " (NOT_IN_MEETING - Must be in meeting first)";
-                break;
-            case ZOOM_SDK_NAMESPACE::SDKERR_WRONG_USAGE:
-                std::cerr << " (WRONG_USAGE - Permission already requested or invalid state)";
-                break;
-            default:
-                std::cerr << " (Unknown error code)";
-                break;
-        }
-        std::cerr << std::endl;
+        std::cerr << "[RECORDING] Permission request failed: " << result << std::endl;
         return false;
     }
 }
