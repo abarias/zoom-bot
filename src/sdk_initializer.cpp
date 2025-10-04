@@ -79,18 +79,33 @@ bool SDKInitializer::authenticateSDK(
     
     std::cout << "SDK authentication request sent, waiting for callback..." << std::endl;
 
-    // Create timeout for authentication
-    guint timeoutId = g_timeout_add_seconds(60, [](gpointer data) -> gboolean {
+    // Create timeout for authentication (reduced to 30 seconds to prevent hanging)
+    guint timeoutId = g_timeout_add_seconds(30, [](gpointer data) -> gboolean {
         GMainLoop* loop = static_cast<GMainLoop*>(data);
-        std::cout << "Authentication timeout reached" << std::endl;
+        std::cout << "\n[TIMEOUT] Authentication timeout reached after 30 seconds" << std::endl;
         g_main_loop_quit(loop);
         return FALSE;
     }, mainLoop);
 
-    std::cout << "\nWaiting for authentication callback with GMainLoop..." << std::endl;
+    // Add periodic status check to prevent infinite loops
+    guint statusCheckId = g_timeout_add_seconds(5, [](gpointer data) -> gboolean {
+        AuthEventHandler* handler = static_cast<AuthEventHandler*>(data);
+        std::cout << "[STATUS] Waiting for authentication... (completed: " 
+                  << (handler->authenticationCompleted ? "yes" : "no") << ")" << std::endl;
+        
+        // Continue checking unless authentication is complete
+        return handler->authenticationCompleted ? FALSE : TRUE;
+    }, authHandler);
+
+    std::cout << "\nWaiting for authentication callback with GMainLoop (30s timeout)..." << std::endl;
     
     // Run the main loop - this will process SDK callbacks
     g_main_loop_run(mainLoop);
+    
+    // Clean up status check timer
+    if (statusCheckId > 0) {
+        g_source_remove(statusCheckId);
+    }
     
     // Remove timeout if still active
     if (timeoutId > 0) {

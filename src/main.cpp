@@ -131,11 +131,27 @@ bool joinMeeting(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService,
                  MeetingEventHandler* eventHandler,
                  GMainLoop* mainLoop) {
     
-    // Set event handler
+    // Set event handlers
     if (meetingService->SetEvent(eventHandler) != ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
         std::cerr << "Failed to set meeting event handler" << std::endl;
         return false;
     }
+    
+    // Register recording event handler
+    auto* recordingController = meetingService->GetMeetingRecordingController();
+    if (recordingController) {
+        if (recordingController->SetEvent(eventHandler) == ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
+            std::cout << "✓ Recording event handler registered" << std::endl;
+        } else {
+            std::cerr << "⚠ Failed to register recording event handler" << std::endl;
+        }
+    } else {
+        std::cerr << "⚠ Recording controller not available during join" << std::endl;
+    }
+    
+    // TODO: Register waiting room event handler (requires separate handler class)
+    // Waiting room functionality handled via meeting status callbacks for now
+    std::cout << "⚠ Waiting room events handled via meeting status (full handler not yet implemented)" << std::endl;
 
     // Prepare join parameters
     ZOOM_SDK_NAMESPACE::JoinParam joinParam;
@@ -256,6 +272,17 @@ bool waitForMeetingConnection(ZOOM_SDK_NAMESPACE::IMeetingService* meetingServic
     
     if (!eventHandler->meetingJoined) {
         auto currentStatus = meetingService->GetMeetingStatus();
+        
+        // Special handling for waiting room - this is actually a successful connection
+        if (currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM || eventHandler->inWaitingRoom) {
+            std::cout << "✓ Bot successfully connected and is in the waiting room!" << std::endl;
+            std::cout << "  Waiting for host to admit the bot into the meeting..." << std::endl;
+            std::cout << "  This may take a while - the bot will wait until admitted." << std::endl;
+            
+            // Continue waiting for admission from waiting room
+            return true; // Treat waiting room as successful connection
+        }
+        
         std::cerr << "Timeout waiting for meeting join. Final status: " << currentStatus;
         switch(currentStatus) {
             case ZOOM_SDK_NAMESPACE::MEETING_STATUS_CONNECTING:
@@ -267,7 +294,13 @@ bool waitForMeetingConnection(ZOOM_SDK_NAMESPACE::IMeetingService* meetingServic
                 std::cerr << "\n- Meeting may be waiting for host to start";
                 break;
             case ZOOM_SDK_NAMESPACE::MEETING_STATUS_WAITINGFORHOST:
-                std::cerr << " (Waiting for host to start meeting)"; break;
+                std::cerr << " (Waiting for host to start meeting)"; 
+                // This is also a successful connection, just waiting for host
+                std::cout << "\n✓ Bot connected and waiting for host to start meeting" << std::endl;
+                return true;
+            case ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM:
+                std::cout << "\n✓ Bot is in waiting room - this is a successful connection!" << std::endl;
+                return true;
             default:
                 std::cerr << " (Unknown status)"; break;
         }
@@ -283,8 +316,8 @@ bool setupEnvironmentAndCredentials();
 bool getMeetingDetailsFromUser();
 bool authenticateWithZoom();
 bool initializeSDKAndJoinMeeting(GMainLoop* mainLoop, ZoomBot::SDKInitializer::InitResult& initResult, MeetingEventHandler& eventHandler);
-bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, ZoomBot::AudioRawHandler& audioHandler);
-void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, MeetingEventHandler& eventHandler);
+bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, ZoomBot::AudioRawHandler& audioHandler, MeetingEventHandler& eventHandler);
+void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, MeetingEventHandler& eventHandler, ZoomBot::AudioRawHandler& audioHandler);
 
 // Helper function to trim whitespace from a string
 std::string trim(const std::string& str) {
@@ -419,18 +452,25 @@ int main() {
 
     std::cout << "✓ Successfully joined the meeting!" << std::endl;
 
-    // Step 5: Setup audio recording
+    // Step 5: Setup audio recording (only if not in waiting room)
     ZoomBot::AudioRawHandler audioHandler;
     globalAudioHandler = &audioHandler;
     globalMeetingService = initResult.meetingService;
 
-    if (!setupAudioRecording(initResult.meetingService, audioHandler)) {
-        std::cout << "⚠ Audio recording setup failed - continuing without recording" << std::endl;
+    // Check if bot is in waiting room - if so, delay audio setup until admission
+    auto currentStatus = initResult.meetingService->GetMeetingStatus();
+    if (currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM || eventHandler.inWaitingRoom) {
+        std::cout << "\n[WAITING ROOM] Bot is in waiting room - audio setup will be done after host admits bot" << std::endl;
+    } else {
+        std::cout << "\n[AUDIO] Setting up audio recording..." << std::endl;
+        if (!setupAudioRecording(initResult.meetingService, audioHandler, eventHandler)) {
+            std::cout << "⚠ Audio recording setup failed - continuing without recording" << std::endl;
+        }
     }
 
     // Step 6: Run the meeting loop
     std::cout << "\nBot is active. Press Ctrl+C to exit..." << std::endl;
-    runMeetingLoop(initResult.meetingService, eventHandler);
+    runMeetingLoop(initResult.meetingService, eventHandler, audioHandler);
 
     // Cleanup
     audioHandler.unsubscribe();
@@ -542,7 +582,39 @@ bool initializeSDKAndJoinMeeting(GMainLoop* mainLoop, ZoomBot::SDKInitializer::I
     return true;
 }
 
-bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, ZoomBot::AudioRawHandler& audioHandler) {
+bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, ZoomBot::AudioRawHandler& audioHandler, MeetingEventHandler& eventHandler) {
+    // Check if we were admitted from waiting room - this affects timing
+    if (eventHandler.admittedFromWaitingRoom) {
+        std::cout << "[AUDIO] Bot was admitted from waiting room - using extended setup timing..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    } else {
+        std::cout << "[AUDIO] Waiting 3 seconds for meeting to stabilize..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+    
+    // Set meeting service for audio handler
+    audioHandler.setMeetingService(meetingService);
+    
+    // Re-register recording event handler (may be needed after waiting room)
+    auto* recordingController = meetingService->GetMeetingRecordingController();
+    if (recordingController) {
+        recordingController->SetEvent(&eventHandler);
+        std::cout << "[RECORDING] Recording event handler re-registered after meeting join" << std::endl;
+    }
+    
+    // Request host recording permission first (async - no waiting)
+    std::cout << "[RECORDING] Requesting host to start recording..." << std::endl;
+    if (audioHandler.requestRecordingPermission()) {
+        std::cout << "✓ Recording permission requested from host" << std::endl;
+        std::cout << "[RECORDING] Permission request sent - will retry audio setup when host responds" << std::endl;
+        // Set flag to indicate we're waiting for permission
+        eventHandler.needsAudioRetryAfterPermission = true;
+    } else {
+        std::cout << "⚠ Could not request recording permission - may not be needed" << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+    
+    // Now attempt audio capture setup
     auto audioResult = ZoomBot::AudioManager::setupAudioCapture(meetingService, audioHandler);
     
     if (audioResult.success) {
@@ -554,12 +626,34 @@ bool setupAudioRecording(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, Zo
         return true;
     } else {
         std::cout << "✗ " << audioResult.statusMessage << std::endl;
+        
+        // If VoIP join failed, try once more after additional wait
+        if (audioResult.statusMessage.find("VoIP join failed") != std::string::npos) {
+            std::cout << "[AUDIO] Retrying VoIP join after additional wait..." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            
+            auto retryResult = ZoomBot::AudioManager::setupAudioCapture(meetingService, audioHandler);
+            if (retryResult.success) {
+                std::cout << "✓ " << retryResult.statusMessage << " (on retry)" << std::endl;
+                return true;
+            }
+        }
+        
+        // If audio subscription failed due to permission, that's expected when waiting for host approval
+        if (audioResult.statusMessage.find("no recording permission") != std::string::npos ||
+            audioResult.statusMessage.find("NO_PERMISSION") != std::string::npos) {
+            std::cout << "⚠ Audio setup will be retried when recording permission is granted by host" << std::endl;
+            return true; // Return true so we don't fail completely - just wait for permission
+        }
+        
         return false;
     }
 }
 
-void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, MeetingEventHandler& eventHandler) {
+void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, MeetingEventHandler& eventHandler, ZoomBot::AudioRawHandler& audioHandler) {
     int loopCount = 0;
+    bool wasInWaitingRoom = eventHandler.inWaitingRoom;
+    bool audioSetupCompleted = false;
     
     while (true) {
         if (shouldExit.load()) {
@@ -567,26 +661,99 @@ void runMeetingLoop(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, Meeting
             break;
         }
         
-        if (!eventHandler.meetingJoined) {
-            std::cout << "\n[MEETING] Left meeting" << std::endl;
+        auto currentStatus = meetingService->GetMeetingStatus();
+        
+        // Don't exit if we're in waiting room or waiting for host
+        bool shouldContinue = eventHandler.meetingJoined || 
+                             eventHandler.inWaitingRoom || 
+                             currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM ||
+                             currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_WAITINGFORHOST ||
+                             currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_CONNECTING;
+        
+        if (!shouldContinue) {
+            std::cout << "\n[MEETING] Left meeting or disconnected" << std::endl;
             break;
+        }
+        
+        // Check if bot was just admitted from waiting room - use the flag set by callback
+        if (eventHandler.needsAudioSetupAfterAdmission && !audioSetupCompleted) {
+            std::cout << "\n[WAITING ROOM] Bot was admitted to meeting! Setting up audio..." << std::endl;
+            
+            // Clear the flag first
+            eventHandler.needsAudioSetupAfterAdmission = false;
+            
+            // Use the existing audio handler that was passed to the function
+            if (setupAudioRecording(meetingService, audioHandler, eventHandler)) {
+                std::cout << "✓ Audio recording setup completed after waiting room admission" << std::endl;
+                audioSetupCompleted = true;
+            } else {
+                std::cout << "⚠ Audio recording setup failed after waiting room admission" << std::endl;
+            }
+        }
+        
+        // Check if recording permission was granted and we need to retry audio setup
+        if (eventHandler.needsAudioRetryAfterPermission) {
+            std::cout << "\n[PERMISSION] **DETECTED** Recording permission granted! Retrying audio setup..." << std::endl;
+            
+            // Clear the flag first
+            eventHandler.needsAudioRetryAfterPermission = false;
+            
+            // Wait a moment for permission to propagate
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            
+            // First, start raw recording (this may be required before subscription)
+            std::cout << "[PERMISSION] Starting raw recording with granted permission..." << std::endl;
+            if (audioHandler.startRecording()) {
+                std::cout << "✓ Raw recording started successfully" << std::endl;
+                
+                // Now try to subscribe to audio data
+                if (audioHandler.subscribe(false)) {
+                    std::cout << "✓ Audio subscription successful after permission grant" << std::endl;
+                    audioSetupCompleted = true;
+                    
+                    // Enable streaming if available
+                    if (audioHandler.enableStreaming("tcp", "localhost:8888")) {
+                        std::cout << "✓ Audio streaming enabled" << std::endl;
+                    }
+                } else {
+                    std::cout << "⚠ Audio subscription failed even after starting recording" << std::endl;
+                }
+            } else {
+                std::cout << "⚠ Could not start raw recording even with permission" << std::endl;
+            }
         }
         
         // Process events
         g_main_context_iteration(nullptr, FALSE);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         
-        // Periodic status (reduced frequency)
+        // Periodic status (adjust message based on state)
         loopCount++;
-        if (loopCount % 100 == 0) { // Every 10 seconds instead of 5
-            std::cout << "[STATUS] Bot active, recording..." << std::endl;
+        if (loopCount % 100 == 0) { // Every 10 seconds
+            if (eventHandler.inWaitingRoom) {
+                std::cout << "[STATUS] Bot in waiting room, waiting for host admission..." << std::endl;
+            } else if (currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_WAITINGFORHOST) {
+                std::cout << "[STATUS] Bot connected, waiting for host to start meeting..." << std::endl;
+            } else if (eventHandler.meetingJoined) {
+                std::cout << "[STATUS] Bot active in meeting";
+                if (eventHandler.needsAudioRetryAfterPermission) {
+                    std::cout << " (waiting for recording permission)";
+                } else if (audioSetupCompleted) {
+                    std::cout << " (recording active)";
+                } else {
+                    std::cout << " (audio setup pending)";
+                }
+                std::cout << std::endl;
+            } else {
+                std::cout << "[STATUS] Bot connecting to meeting..." << std::endl;
+            }
         }
         
-        // Check meeting status
-        auto status = meetingService->GetMeetingStatus();
-        if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_FAILED || 
-            status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IDLE) {
-            std::cout << "\n[MEETING] Meeting ended" << std::endl;
+        // Check for terminal meeting states
+        if (currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_FAILED || 
+            currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IDLE ||
+            currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_ENDED) {
+            std::cout << "\n[MEETING] Meeting ended or failed (status: " << currentStatus << ")" << std::endl;
             break;
         }
     }

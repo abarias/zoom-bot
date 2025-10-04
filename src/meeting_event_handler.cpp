@@ -11,15 +11,34 @@ void MeetingEventHandler::onMeetingStatusChanged(ZOOM_SDK_NAMESPACE::MeetingStat
     logMeetingStatus(status, result);
     
     switch (status) {
+        case ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM:
+            std::cout << " [Bot is in waiting room, waiting for host admission]";
+            inWaitingRoom = true;
+            meetingJoined = false;
+            break;
+            
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_INMEETING:
+            if (inWaitingRoom) {
+                std::cout << " [Bot admitted from waiting room to meeting!]";
+                std::cout << "\n[ADMISSION] Host admitted bot - meeting access granted!";
+                admittedFromWaitingRoom = true;
+                inWaitingRoom = false;
+                // Set a flag to trigger audio setup in the main loop
+                needsAudioSetupAfterAdmission = true;
+            } else {
+                std::cout << " [Bot joined meeting directly]";
+            }
             meetingJoined = true;
+            std::cout << "\n[DEBUG] Meeting joined successfully, staying in meeting...";
             if (mainLoop && g_main_loop_is_running(mainLoop)) {
-                std::cout << " [Exiting main loop]";
+                std::cout << " [Exiting join wait loop]";
                 g_main_loop_quit(mainLoop);
             }
             break;
+            
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_FAILED:
             meetingFailed = true;
+            inWaitingRoom = false;
             if (result != 0) {
                 logMeetingFailureReason(result);
             }
@@ -27,7 +46,24 @@ void MeetingEventHandler::onMeetingStatusChanged(ZOOM_SDK_NAMESPACE::MeetingStat
                 g_main_loop_quit(mainLoop);
             }
             break;
+            
+        case ZOOM_SDK_NAMESPACE::MEETING_STATUS_WAITINGFORHOST:
+            std::cout << " [Waiting for host to start meeting]";
+            break;
+            
+        case ZOOM_SDK_NAMESPACE::MEETING_STATUS_IDLE:
+            if (meetingJoined) {
+                std::cout << " [⚠ Bot left the meeting or was disconnected!]";
+                std::cout << "\n[DISCONNECT] Meeting status changed to IDLE - bot is no longer in meeting";
+                meetingJoined = false;
+                // Don't quit main loop here - let the runMeetingLoop handle it
+            } else {
+                std::cout << " [Bot not in meeting]";
+            }
+            break;
+            
         default:
+            std::cout << " [Unknown status: " << status << "]";
             break;
     }
     std::cout << std::endl;
@@ -36,7 +72,7 @@ void MeetingEventHandler::onMeetingStatusChanged(ZOOM_SDK_NAMESPACE::MeetingStat
 void MeetingEventHandler::logMeetingStatus(ZOOM_SDK_NAMESPACE::MeetingStatus status, int result) {
     switch (status) {
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_IDLE:
-            std::cout << "IDLE"; 
+            std::cout << "IDLE (Not in meeting)"; 
             break;
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_CONNECTING:
             std::cout << "CONNECTING (Still connecting, please wait...)";
@@ -46,6 +82,9 @@ void MeetingEventHandler::logMeetingStatus(ZOOM_SDK_NAMESPACE::MeetingStatus sta
             break;
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_WAITINGFORHOST:
             std::cout << "WAITING FOR HOST (Host hasn't started the meeting yet, continuing to wait...)";
+            break;
+        case ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM:
+            std::cout << "IN WAITING ROOM (Waiting for host to admit bot into the meeting...)";
             break;
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_INMEETING:
             std::cout << "IN MEETING - SUCCESS!";
@@ -130,8 +169,11 @@ void MeetingEventHandler::onLocalRecordingPrivilegeRequestStatus(ZOOM_SDK_NAMESP
     switch(status) {
         case ZOOM_SDK_NAMESPACE::RequestLocalRecording_Granted:
             std::cout << "GRANTED - Recording permission approved by host!";
+            std::cout << "\n[PERMISSION] Host approved recording - setting retry flag for audio setup!";
             recordingPermissionGranted = true;
             recordingPermissionDenied = false;
+            needsAudioRetryAfterPermission = true; // Signal to retry audio setup
+            std::cout << "\n[PERMISSION] Retry flag set: needsAudioRetryAfterPermission = true";
             break;
         case ZOOM_SDK_NAMESPACE::RequestLocalRecording_Denied:
             std::cout << "DENIED - Recording permission denied by host";

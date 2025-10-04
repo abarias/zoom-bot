@@ -30,5 +30,6 @@ namespace ZoomBot {
     private:
         static bool waitForVoipJoin(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, int timeoutSeconds);
         static bool isVoipJoined(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService);
+        static bool waitForMeetingStable(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, int timeoutSeconds);
     };
 }

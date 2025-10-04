@@ -59,18 +59,56 @@ AudioManager::AudioSetupResult AudioManager::setupAudioCapture(ZOOM_SDK_NAMESPAC
 bool AudioManager::joinVoIP(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, int timeoutSeconds) {
     if (!meetingService) return false;
 
-    auto* audioCtrl = meetingService->GetMeetingAudioController();
-    if (!audioCtrl) return false;
-
-    // Configure audio settings
-    audioCtrl->EnablePlayMeetingAudio(false); // Disable local audio playback
-    auto joinResult = audioCtrl->JoinVoip();
+    // Check current meeting status first
+    auto currentStatus = meetingService->GetMeetingStatus();
+    std::cout << "[AUDIO] Current meeting status before VoIP join: " << currentStatus << std::endl;
     
-    if (joinResult != ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
-        std::cerr << "[AUDIO] VoIP join failed: " << joinResult << std::endl;
+    // If still CONNECTING, wait for stability
+    if (currentStatus == ZOOM_SDK_NAMESPACE::MEETING_STATUS_CONNECTING) {
+        std::cout << "[AUDIO] Meeting still CONNECTING - waiting for stable status..." << std::endl;
+        if (!waitForMeetingStable(meetingService, 15)) {
+            std::cout << "[AUDIO] ⚠ Meeting did not stabilize - VoIP join will likely fail" << std::endl;
+            std::cout << "[AUDIO] Current status: " << meetingService->GetMeetingStatus() << std::endl;
+            return false;  // Don't attempt VoIP join if meeting isn't stable
+        }
+    } else {
+        std::cout << "[AUDIO] Meeting status is stable, proceeding with VoIP join..." << std::endl;
+    }
+
+    auto* audioCtrl = meetingService->GetMeetingAudioController();
+    if (!audioCtrl) {
+        std::cerr << "[AUDIO] Audio controller not available" << std::endl;
         return false;
     }
 
+    std::cout << "[AUDIO] Configuring audio settings..." << std::endl;
+    // Configure audio settings for container environment
+    audioCtrl->EnablePlayMeetingAudio(false); // Disable local audio playback to avoid feedback
+    
+    // Try to set audio device if possible (may help with virtual audio)
+    // Note: In container environment, this may not be necessary but doesn't hurt
+    
+    std::cout << "[AUDIO] Attempting to join VoIP..." << std::endl;
+    auto joinResult = audioCtrl->JoinVoip();
+    
+    if (joinResult != ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS) {
+        std::cerr << "[AUDIO] VoIP join failed with error code: " << joinResult;
+        switch(joinResult) {
+            case 2: // SDKERR_WRONG_USAGE
+                std::cerr << " (WRONG_USAGE - May need to wait longer or meeting not ready)";
+                break;
+            case 17: // SDKERR_NO_AUDIODEVICE_ISFOUND  
+                std::cerr << " (NO_AUDIODEVICE_FOUND - Virtual audio devices may not be detected)";
+                break;
+            default:
+                std::cerr << " (Unknown error)";
+                break;
+        }
+        std::cerr << std::endl;
+        return false;
+    }
+
+    std::cout << "[AUDIO] VoIP join request sent, waiting for connection..." << std::endl;
     // Wait for VoIP connection
     return waitForVoipJoin(meetingService, timeoutSeconds);
 }
@@ -100,6 +138,49 @@ bool AudioManager::isVoipJoined(ZOOM_SDK_NAMESPACE::IMeetingService* meetingServ
     if (!self) return false;
     auto at = self->GetAudioJoinType();
     return at == ZOOM_SDK_NAMESPACE::AUDIOTYPE_VOIP || at == ZOOM_SDK_NAMESPACE::AUDIOTYPE_PHONE;
+}
+
+bool AudioManager::waitForMeetingStable(ZOOM_SDK_NAMESPACE::IMeetingService* meetingService, int timeoutSeconds) {
+    const int intervalMs = 500;
+    int waitedMs = 0;
+    
+    std::cout << "[AUDIO] Waiting for meeting to reach stable status..." << std::endl;
+    
+    while (waitedMs < timeoutSeconds * 1000) {
+        auto status = meetingService->GetMeetingStatus();
+        std::cout << "[AUDIO] Current status: " << status << std::endl;
+        
+        // Check if meeting is in a stable state (not connecting)
+        if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_INMEETING) {
+            std::cout << "[AUDIO] ✓ Meeting is stable (INMEETING)" << std::endl;
+            return true;
+        }
+        
+        // Also accept these statuses as potentially stable
+        if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_WAITINGFORHOST) {
+            std::cout << "[AUDIO] ✓ Meeting is stable (WAITING_FOR_HOST)" << std::endl;
+            return true;
+        }
+        
+        if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM) {
+            std::cout << "[AUDIO] ✓ Meeting is stable (IN_WAITING_ROOM)" << std::endl;
+            return true;
+        }
+        
+        // For CONNECTING status, wait longer but eventually timeout
+        if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_CONNECTING) {
+            if (waitedMs > 15000) { // After 15 seconds of CONNECTING, give up
+                std::cout << "[AUDIO] ⚠ Still CONNECTING after 15s - meeting may not stabilize" << std::endl;
+                return false;
+            }
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+        waitedMs += intervalMs;
+    }
+    
+    std::cout << "[AUDIO] ⚠ Meeting stability timeout after " << timeoutSeconds << "s" << std::endl;
+    return false;
 }
 
 }

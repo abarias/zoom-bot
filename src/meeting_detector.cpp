@@ -24,18 +24,17 @@ MeetingDetector::DetectionResult MeetingDetector::checkMeetingConnection(
     switch(status) {
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_CONNECTING:
             std::cout << " (CONNECTING)";
-            if (hasValidMeetingInfo) {
-                std::cout << "\n[ENHANCED DETECTION] Meeting info available - bot is connected!";
+            // Be more conservative - only declare success if we have VERY strong indicators
+            if (hasValidMeetingInfo && hasControllers && checkTimeBasedDetection()) {
+                std::cout << "\n[ENHANCED DETECTION] Strong indicators suggest connection is stable!";
                 result.actuallyInMeeting = true;
-                result.detectionMethod = "Meeting info available despite CONNECTING status";
-            } else if (hasControllers) {
-                std::cout << "\n[ENHANCED DETECTION] Audio/Video controllers available - bot is connected!";
-                result.actuallyInMeeting = true;
-                result.detectionMethod = "Audio/Video controllers available despite CONNECTING status";
-            } else if (checkTimeBasedDetection() && hasControllers) {
-                std::cout << "\n[ENHANCED DETECTION] Long connection time + controllers = likely connected!";
-                result.actuallyInMeeting = true;
-                result.detectionMethod = "Time-based detection with partial controllers";
+                result.detectionMethod = "Meeting info + controllers + time-based detection";
+            } else {
+                std::cout << "\n[CONNECTING] Still connecting... (info:" << (hasValidMeetingInfo ? "✓" : "✗") 
+                          << " controllers:" << (hasControllers ? "✓" : "✗") << ")";
+                // Continue waiting - don't declare success yet
+                result.actuallyInMeeting = false;
+                result.detectionMethod = "Still in CONNECTING status - waiting for proper connection";
             }
             break;
             
@@ -44,6 +43,13 @@ MeetingDetector::DetectionResult MeetingDetector::checkMeetingConnection(
             std::cout << "\n[ENHANCED DETECTION] Connected and waiting for host to start!";
             result.actuallyInMeeting = true;
             result.detectionMethod = "Status = WAITING_FOR_HOST (connected but waiting)";
+            break;
+            
+        case ZOOM_SDK_NAMESPACE::MEETING_STATUS_IN_WAITING_ROOM:
+            std::cout << " (IN WAITING ROOM)";
+            std::cout << "\n[ENHANCED DETECTION] Bot is in waiting room, waiting for host admission!";
+            result.actuallyInMeeting = true;
+            result.detectionMethod = "Status = IN_WAITING_ROOM (connected but waiting for admission)";
             break;
             
         case ZOOM_SDK_NAMESPACE::MEETING_STATUS_INMEETING:

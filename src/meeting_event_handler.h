@@ -17,6 +17,10 @@ public:
     bool meetingFailed = false;
     bool recordingPermissionGranted = false;
     bool recordingPermissionDenied = false;
+    bool needsAudioRetryAfterPermission = false;
+    bool inWaitingRoom = false;
+    bool admittedFromWaitingRoom = false;
+    bool needsAudioSetupAfterAdmission = false;
     
     explicit MeetingEventHandler(GMainLoop* loop);
     

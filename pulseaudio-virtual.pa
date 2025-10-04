@@ -1,0 +1,12 @@
+# PulseAudio Configuration for Zoom Bot Container
+# This file ensures virtual audio devices are available for Zoom SDK integration
+
+# Load virtual speaker (null sink) for audio output
+load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" rate=44100 channels=2 channel_map=stereo
+
+# Load virtual microphone (virtual source) for audio input  
+load-module module-virtual-source source_name=virtual_microphone rate=44100 channels=2 channel_map=stereo
+
+# Set virtual devices as defaults
+set-default-sink virtual_speaker
+set-default-source virtual_microphone

@@ -48,10 +48,20 @@ RUN apt-get update && apt-get install -y \
     # JSON parsing for modern C++
     nlohmann-json3-dev \
     # Qt libraries (legacy support - may not be needed in newer versions)
-    qt5-default \
+    qtbase5-dev \
+    qtchooser \
+    qt5-qmake \
+    qtbase5-dev-tools \
     libqt5gui5 \
     # Audio utilities for testing (optional)
     alsa-utils \
+    # PulseAudio support for audio streaming
+    pulseaudio \
+    pulseaudio-utils \
+    libpulse-dev \
+    libpulse0 \
+    # ALSA PulseAudio plugin for compatibility
+    libasound2-plugins \
     # File type detection utility
     file \
     && rm -rf /var/lib/apt/lists/*
@@ -70,6 +80,11 @@ ENV CPLUS_INCLUDE_PATH="/usr/local/zoom-sdk/h:$CPLUS_INCLUDE_PATH"
 ENV LIBRARY_PATH="/usr/local/zoom-sdk:$LIBRARY_PATH"
 ENV LD_LIBRARY_PATH="/usr/local/zoom-sdk:/usr/local/zoom-sdk/qt_libs/Qt/lib:$LD_LIBRARY_PATH"
 
+# Audio environment variables for container
+ENV PULSE_RUNTIME_PATH="/tmp/pulse-runtime"
+ENV ALSA_PCM_CARD="pulse"
+ENV ALSA_PCM_DEVICE="0"
+
 # Fix missing versioned .so if only the unversioned one exists
 RUN cd /usr/local/zoom-sdk && \
     if [ -f libmeetingsdk.so ] && [ ! -f libmeetingsdk.so.1 ]; then \
@@ -81,6 +96,8 @@ COPY src/ /app/src/
 COPY CMakeLists.txt /app/
 COPY *.sh /app/
 COPY *.md /app/
+COPY *.pa /app/
+COPY asound.conf /app/
 
 # Build the application
 RUN cd /app && mkdir -p build && cd build && cmake .. && make
@@ -91,6 +108,18 @@ RUN mkdir -p /app/recordings
 # Set executable permissions for scripts
 RUN chmod +x /app/*.sh
 
+# Create PulseAudio configuration directory and copy virtual audio config
+RUN mkdir -p /etc/pulse && \
+    cp /app/pulseaudio-virtual.pa /etc/pulse/virtual-audio.pa && \
+    cp /app/asound.conf /etc/asound.conf
+
+# Set up entrypoint for virtual audio initialization
+COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY run-zoom-bot.sh /usr/local/bin/run-zoom-bot.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-zoom-bot.sh
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
 # Default command
 CMD ["bash"]
-    fi
