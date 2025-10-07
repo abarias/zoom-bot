@@ -3,7 +3,7 @@
 #include "zoom_sdk.h"
 #include "zoom_sdk_def.h"
 #include "auth_service_interface.h"
-#include "jwt_helper.h"
+#include "../src/jwt_helper.h"
 #include <nlohmann/json.hpp>
 
 class TestAuthHandler : public ZOOM_SDK_NAMESPACE::IAuthServiceEvent {

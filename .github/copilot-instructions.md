@@ -64,8 +64,8 @@ cmake .. && make
 
 ### Testing TCP Integration
 ```bash
-./start_audio_service.sh                    # Start Python service
-python3 test_connection.py                  # Test TCP connectivity
+./scripts/start_audio_service.sh            # Start Python service
+python3 tests/test_connection.py            # Test TCP connectivity
 cd build && ./zoom_poc                      # Run main bot
 ```
 

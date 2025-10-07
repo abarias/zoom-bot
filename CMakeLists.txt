@@ -40,13 +40,13 @@ add_executable(zoom_poc
     src/meeting_setup.cpp
     src/audio_manager.cpp)
 add_executable(test_auth
-    src/test_auth.cpp
+    tests/test_auth.cpp
     src/jwt_helper.cpp
     src/zoom_auth.cpp)
 
 # WAV converter utility
 add_executable(wav_converter
-    src/wav_converter.cpp
+    tests/wav_converter.cpp
     src/audio_raw_handler.cpp
     src/audio_streamer.cpp)
 

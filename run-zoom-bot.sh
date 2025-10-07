@@ -87,9 +87,9 @@ verify_audio_setup() {
 echo "[SETUP] Preparing virtual audio environment for Zoom Bot..."
 
 # Use simple audio setup that actually works
-if [ -f "/workspaces/zoom-bot/setup-simple-audio.sh" ]; then
+if [ -f "/workspaces/zoom-bot/scripts/setup-simple-audio.sh" ]; then
     echo "[SETUP] Using container-optimized audio setup..."
-    if /workspaces/zoom-bot/setup-simple-audio.sh; then
+    if /workspaces/zoom-bot/scripts/setup-simple-audio.sh; then
         echo "[SETUP] ✅ Audio environment configured successfully!"
     else
         echo "[SETUP] ⚠ Audio setup had issues but will continue"

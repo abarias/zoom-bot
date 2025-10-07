@@ -61,7 +61,7 @@ The TCP protocol uses a simple TLV (Type-Length-Value) format:
 
 ```bash
 # Start the audio processor service
-./start_audio_service.sh
+./scripts/start_audio_service.sh
 
 # Or manually:
 python3 audio_processor.py --host localhost --port 8888 --output-dir processed_audio
@@ -121,7 +121,7 @@ This sends synthetic audio data and should create test WAV files.
 
 ### Integration Test
 
-1. Start the Python service: `./start_audio_service.sh`
+1. Start the Python service: `./scripts/start_audio_service.sh`
 2. Start the Zoom bot: `cd build && ./zoom_poc`
 3. Join a meeting and verify streaming logs on both sides
 
@@ -237,7 +237,7 @@ src/
 └── audio_raw_handler.cpp     # Integrated streaming calls
 
 audio_processor.py            # Python TCP server service
-test_audio_processor.py       # Protocol testing script  
-start_audio_service.sh        # Service startup script
+tests/test_audio_processor.py # Protocol testing script  
+scripts/start_audio_service.sh # Service startup script
 requirements.txt              # Updated Python dependencies
 ```
